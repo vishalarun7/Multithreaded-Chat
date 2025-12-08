@@ -131,16 +131,16 @@ int add_muted_for_client(struct server_state *s, const char *requester, const ch
     struct client_node *cur = s->head;
     while (cur) {
         if (strncmp(cur->name, requester, MAX_NAME_LEN) == 0) {
-            /* check if already muted */
+            // check if already muted
             for (int i = 0; i < cur->muted_count; ++i) {
                 if (strncmp(cur->muted[i], muted_name, MAX_NAME_LEN) == 0) {
                     pthread_rwlock_unlock(&s->rwlock);
-                    return -1; /* already muted */
+                    return -1; 
                 }
             }
             if (cur->muted_count >= MAX_MUTED) {
                 pthread_rwlock_unlock(&s->rwlock);
-                return -1; /* full */
+                return -1; //full
             }
             strncpy(cur->muted[cur->muted_count], muted_name, MAX_NAME_LEN - 1);
             cur->muted[cur->muted_count][MAX_NAME_LEN - 1] = '\0';
@@ -151,7 +151,7 @@ int add_muted_for_client(struct server_state *s, const char *requester, const ch
         cur = cur->next;
     }
     pthread_rwlock_unlock(&s->rwlock);
-    return -1; /* requester not found */
+    return -1; 
 }
 
 // broadcast message to all
