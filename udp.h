@@ -1,5 +1,9 @@
 // libraries needed for various functions
 // use man page for details
+
+#ifndef UDP_H
+#define UDP_H
+
 #include <sys/types.h>  // data types like size_t, socklen_t
 #include <sys/socket.h> // socket(), bind(), connect(), listen(), accept()
 #include <netinet/in.h> // sockaddr_in, htons(), htonl(), INADDR_ANY
@@ -7,9 +11,42 @@
 #include <unistd.h>     // close()
 #include <string.h>     // memset(), memcpy()
 #include <assert.h>
+#include <pthread.h>
+
+#include <stdlib.h>
+#include <string.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000
+#define MAX_NAME_LEN 64
+#define MAX_MUTED 16
+#define MAX_REQ_ARGS 3
+
+struct client_node {
+    char name[MAX_NAME_LEN]; // client's chat name
+    struct sockaddr_in addr; // client's IP + port
+    char muted[MAX_MUTED][MAX_NAME_LEN]; //client's muted clients
+    int muted_count;
+    struct client_node *next; // linked list pointer
+};
+
+struct server_state {
+    struct client_node *head; // head of linked list
+    pthread_rwlock_t rwlock; // reader-writer lock protecting list
+};
+
+/* server-state helpers */
+void init_server_state(struct server_state *s);
+void destroy_server_state(struct server_state *s);
+
+struct client_node *find_client_by_name(struct server_state *s, const char *name);
+struct client_node *find_client_by_addr(struct server_state *s, const struct sockaddr_in *addr);
+int add_client(struct server_state *s, const struct sockaddr_in *addr, const char *name);
+int remove_client_by_name(struct server_state *s, const char *name);
+int rename_client(struct server_state *s, const char *oldname, const char *newname);
+int add_muted_for_client(struct server_state *s, const char *requester, const char *muted_name);
+int remove_muted_for_client(struct server_state *s, const char *requester, const char *muted_name);
+int is_muted_for_receiver(struct client_node *receiver, const char *sender_name);
 
 int set_socket_addr(struct sockaddr_in *addr, const char *ip, int port)
 {
@@ -100,3 +137,5 @@ int udp_socket_write(int sd, struct sockaddr_in *addr, char *buffer, int n)
     int addr_len = sizeof(struct sockaddr_in);
     return sendto(sd, buffer, n, 0, (struct sockaddr *)addr, addr_len);
 }
+
+#endif

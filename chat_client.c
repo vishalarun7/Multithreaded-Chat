@@ -1,8 +1,10 @@
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <errno.h>
 #include "udp.h"
-
-#define CLIENT_PORT 10000
 
 int main(int argc, char *argv[])
 {
