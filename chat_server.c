@@ -97,32 +97,32 @@ int remove_client_by_name(struct server_state *s, const char *name) {
     return -1;
 }
 
-int rename_client(struct server_state *s, const char *oldname, const char *newname) {
-    if (!oldname || !newname) return -1;
+int rename_client(struct server_state *s, const struct sockaddr_in *addr, const char *newname) {
+    if (!addr || !newname || newname[0] == '\0') return -1;
     pthread_rwlock_wrlock(&s->rwlock);
     struct client_node *cur = s->head;
     while (cur) {
         if (strncmp(cur->name, newname, MAX_NAME_LEN) == 0) {
             pthread_rwlock_unlock(&s->rwlock);
-            return -1; //new name taken 
+            return -1; // name taken
         }
         cur = cur->next;
     }
-
     //find oldname
     cur = s->head;
     while (cur) {
-        if (strncmp(cur->name, oldname, MAX_NAME_LEN) == 0) {
-            strncpy(cur->name, newname, MAX_NAME_LEN-1);
-            cur->name[MAX_NAME_LEN-1] = '\0';
+        if (cur->addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
+            cur->addr.sin_port == addr->sin_port)
+        {
+            strncpy(cur->name, newname, MAX_NAME_LEN - 1);
+            cur->name[MAX_NAME_LEN - 1] = '\0';
             pthread_rwlock_unlock(&s->rwlock);
-            return 0;
+            return 0; 
         }
         cur = cur->next;
     }
-
     pthread_rwlock_unlock(&s->rwlock);
-    return -1; //if oldname not found 
+    return -1; // client not found
 }
 
 int add_muted_for_client(struct server_state *s, const char *requester, const char *muted_name) {
@@ -154,16 +154,83 @@ int add_muted_for_client(struct server_state *s, const char *requester, const ch
     return -1; 
 }
 
-// broadcast message to all
-void broadcast(struct server_state *s, int sd, const char *msg) {
+// this tests whether a receiver has muted a given sender_name 
+int is_muted_for_receiver(struct client_node *receiver, const char *sender_name) {
+    if (!receiver || !sender_name) return 0;
+    for (int i = 0; i < receiver->muted_count; ++i) {
+        if (strncmp(receiver->muted[i], sender_name, MAX_NAME_LEN) == 0) {
+            return 1; 
+        }
+    }
+    return 0;
+}
+
+void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name) {
     pthread_rwlock_rdlock(&s->rwlock);
     struct client_node *cur = s->head;
     while (cur) {
-        udp_socket_write(sd, &cur->addr, (char*)msg, strlen(msg)+1);
+        /* if this receiver muted the sender, skip */
+        if (sender_name && is_muted_for_receiver(cur, sender_name)) {
+            cur = cur->next;
+            continue;
+        }
+        udp_socket_write(sd, &cur->addr, (char *)msg, (int)strlen(msg) + 1);
         cur = cur->next;
     }
     pthread_rwlock_unlock(&s->rwlock);
 }
+
+void say_to(struct server_state*s, int sd, const char *msg, const char *recipient_name, const char *sender_name){
+    
+}
+
+//this is the request object sent to handler threads
+struct request {
+    int sd;                         // server socket descriptor (to send replies) 
+    struct sockaddr_in src;         // source address of packet
+    char buf[BUFFER_SIZE];          // copy of received packet (null-terminated)
+    int len;                        // number of bytes received
+    struct server_state *state;     
+};
+
+//to ensure buffer is null terminated 
+static void ensure_null_terminated(char *buf, int n) {
+    if (n < 0) return;
+    if (n < BUFFER_SIZE) buf[n] = '\0';
+    else buf[BUFFER_SIZE - 1] = '\0';
+}
+
+//to trim leading spaces
+static char *skip_spaces(char *s){
+    while (*s == ' ' || *s == '\t')
+        s++;
+    return s;
+}
+
+//parses and handles commmand in request
+static void handle_request(struct request *req) {
+    ensure_null_terminated(req->buf, req->len);
+    char *p = skip_spaces(req->buf);
+    char *dollar = strchr(p, '$');
+    if (!dollar) {
+        return;
+    }
+    *dollar = '\0';
+    char *cmd = p;
+    char *args = skip_spaces(dollar + 1);
+
+    // conn$ client_name
+    if (strcmp(cmd, "conn") == 0) {
+        add_client(req->state, &req->src, args);
+        return;
+    }
+
+    //say$ msg
+    if (strcmp(cmd, 'say') ==0) {
+        
+    }
+
+
 
 int main() {
     struct server_state state;
