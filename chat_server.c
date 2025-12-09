@@ -104,12 +104,11 @@ int rename_client(struct server_state *s, const struct sockaddr_in *addr, const 
     while (cur) {
         if (strncmp(cur->name, newname, MAX_NAME_LEN) == 0) {
             pthread_rwlock_unlock(&s->rwlock);
-            return -1; // name taken
+            return -1;
         }
         cur = cur->next;
     }
-    //find oldname
-    cur = s->head;
+    cur = s->head; //find oldname
     while (cur) {
         if (cur->addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
             cur->addr.sin_port == addr->sin_port)
@@ -169,7 +168,6 @@ void say_message(struct server_state *s, int sd, const char *msg, const char *se
     pthread_rwlock_rdlock(&s->rwlock);
     struct client_node *cur = s->head;
     while (cur) {
-        /* if this receiver muted the sender, skip */
         if (sender_name && is_muted_for_receiver(cur, sender_name)) {
             cur = cur->next;
             continue;
@@ -181,7 +179,11 @@ void say_message(struct server_state *s, int sd, const char *msg, const char *se
 }
 
 void say_to(struct server_state*s, int sd, const char *msg, const char *recipient_name, const char *sender_name){
-    
+    pthread_rwlock_rdlock(&s->rwlock);
+    struct client_node *cur = s->head;
+    while (cur) {
+        if (sender_name )
+    }
 }
 
 //this is the request object sent to handler threads
