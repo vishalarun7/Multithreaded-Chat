@@ -50,11 +50,8 @@ static void *listener_thread(void *arg) {
         }
 
         // Persist incoming chat to log file for tailing in second terminal.
-        fprintf(ctx->log_fp, "%s\n", buffer);
+        fprintf(ctx->log_fp, "%s", buffer);
         fflush(ctx->log_fp);
-
-        // Provide minimal console hint without disrupting stdin heavy usage.
-        printf("\n[chat] %s\n> ", buffer);
         fflush(stdout);
     }
     return NULL;

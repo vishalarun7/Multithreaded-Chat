@@ -1,0 +1,10 @@
+Hi, the server has received: conn$ Alice
+
+Hi, the server has received: diconn$
+
+Hi, the server has received: disconn$
+
+Hi, the server has received: say$ hi
+Hi, the server has received: say$ hi
+Hi, the server has received: say$ hi
+Hi, the server has received: disconn$
