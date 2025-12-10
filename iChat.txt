@@ -1,0 +1,11 @@
+
+--- New Session Started ---
+Hi vishal, you have successfully connected to the chatvishal: hellovishal: bye
+--- New Session Started ---
+Hi k, you have successfully connected to the chatvishal: hellovishal: bye
+--- New Session Started ---
+Hi aryan, you have successfully connected to the chatvishal: hellovishal: byearyan: lolll
+--- New Session Started ---
+Hi aryan, you have successfully connected to the chatvishal: hellovishal: byelolll
+--- New Session Started ---
+Hi alice, you have successfully connected to the chatvishal: hellovishal: byelolll
