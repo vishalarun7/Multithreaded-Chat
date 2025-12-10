@@ -78,8 +78,7 @@ static void *sender_thread(void *arg) {
         if (request[0] == '\0')
             continue;
 
-        int rc = udp_socket_write(ctx->sd, &ctx->server_addr, request,
-                                  (int)strlen(request) + 1);
+        int rc = udp_socket_write(ctx->sd, &ctx->server_addr, request, (int)strlen(request) + 1);
         if (rc < 0) {
             fprintf(stderr, "sender: send failed (%s)\n", strerror(errno));
             ctx->running = 0;
@@ -127,15 +126,21 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    FILE *log_fp = fopen(CHAT_LOG_FILE, "a");
+    // Truncate the log at startup so no previous session messages remain
+    FILE *log_fp = fopen(CHAT_LOG_FILE, "w");
+    if (!log_fp) {
+        perror("Failed to reset chat log");
+        close(sd);
+        return EXIT_FAILURE;
+    }
+    fclose(log_fp);
+
+    log_fp = fopen(CHAT_LOG_FILE, "a");
     if (!log_fp) {
         perror("Failed to open chat log");
         close(sd);
         return EXIT_FAILURE;
     }
-
-    fprintf(log_fp, "\n--- New Session Started ---\n");
-    fflush(log_fp);
 
     struct client_context ctx = {
         .sd = sd,
