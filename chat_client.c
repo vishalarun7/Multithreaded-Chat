@@ -35,6 +35,7 @@ struct client_context {
 };
 
 static GAsyncQueue *send_queue;
+static gpointer queue_quit_token = GINT_TO_POINTER(1); // closes gkt properly
 
 struct append_request {
     GtkTextBuffer *buffer;
@@ -156,7 +157,7 @@ static void on_window_destroy(GtkWidget *widget, gpointer user_data) {
     (void)widget;
     struct client_context *ctx = user_data;
     ctx->running = 0;
-    if (send_queue) g_async_queue_push(send_queue, NULL);
+    if (send_queue) g_async_queue_push(send_queue, queue_quit_token);
     gtk_main_quit();
 }
 
@@ -262,9 +263,11 @@ static void *sender_thread(void *arg) {
     struct client_context *ctx = (struct client_context *)arg;
 
     while (ctx->running) {
-        char *request = g_async_queue_pop(send_queue);
-        if (!request)
+        gpointer item = g_async_queue_pop(send_queue);
+        if (item == queue_quit_token)
             break;
+
+        char *request = item;
 
         trim_newline(request);
         if (request[0] == '\0') {
@@ -370,7 +373,7 @@ int main(int argc, char *argv[])
     gtk_main();
 
     ctx.running = 0;
-    if (send_queue) g_async_queue_push(send_queue, NULL);
+    if (send_queue) g_async_queue_push(send_queue, queue_quit_token);
 
     pthread_join(sender, NULL);
     pthread_join(listener, NULL);
