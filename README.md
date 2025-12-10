@@ -5,7 +5,7 @@ A multithreaded client–server chat system written in **C**, featuring a **GTK-
 
 ## Preview
 
-![Chat client UI](Screenshot 2025-12-10 at 10.22.08 PM.png)
+![Chat client UI](Preview.png)
 
 ---
 
@@ -71,7 +71,7 @@ gcc chat_server.c circular_queue.c -lpthread -o server
 ```
 
 Multiple clients may run simultaneously.
-```
+
 
 ***
 
