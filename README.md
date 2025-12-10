@@ -1,3 +1,39 @@
+
+# Multithreaded Chat Application
+
+A multithreaded client–server chat system written in **C**, featuring a **GTK-based graphical client interface**, **UDP networking**, and a **custom circular message queue** to maintain recent chat history.
+
+---
+
+# Table of Contents
+
+1. [Repository Layout](#repository-layout)  
+2. [Building & Running](#building--running)  
+3. [Core Functionality](#core-functionality)  
+4. [Command Execution](#command-execution)  
+5. [Circular Queue (PE1)](#circular-queue-pe1)  
+6. [Proposed Extensions](#proposed-extensions)  
+7. [Dependencies](#dependencies)
+
+---
+
+# Repository Layout
+
+MULTITHREADED-CHAT/
+├── chat_client.c # GTK-based client implementation
+├── chat_client # Compiled client binary
+├── chat_server.c # Server implementation
+├── chat_server.h
+├── chat_server # Compiled server binary
+├── circular_queue.c # Circular queue implementation (PE1)
+├── circular_queue.h
+├── udp.h # UDP networking utilities
+├── client # Optional client launcher script
+├── server # Optional server launcher script
+└── iChat.txt # Test logs / sample chat history
+
+
+
 ## Building the Client (GTK UI)
 
 Requires **GTK+ 3.0**.
