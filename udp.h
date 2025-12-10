@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdio.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000
@@ -35,11 +36,19 @@ static inline int set_socket_addr(struct sockaddr_in *addr,
 static inline int udp_socket_open(int port)
 {
     int sd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sd < 0) {
+        perror("socket");
+        return -1;
+    }
 
     struct sockaddr_in this_addr;
     set_socket_addr(&this_addr, NULL, port);
 
-    bind(sd, (struct sockaddr *)&this_addr, sizeof(this_addr));
+    if (bind(sd, (struct sockaddr *)&this_addr, sizeof(this_addr)) < 0) {
+        perror("bind");
+        close(sd);
+        return -1;
+    }
     return sd;
 }
 

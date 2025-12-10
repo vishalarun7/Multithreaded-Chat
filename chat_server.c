@@ -191,6 +191,20 @@ int is_muted_for_receiver(struct client_node *receiver, const char *sender_name)
     return 0;
 }
 
+static void send_with_newline(int sd, const struct sockaddr_in *addr, const char *msg) {
+    char buffer[BUFFER_SIZE];
+    size_t len = strnlen(msg, BUFFER_SIZE - 2);
+    memcpy(buffer, msg, len);
+    if (len == 0 || buffer[len - 1] != '\n') {
+        buffer[len++] = '\n';
+    }
+    buffer[len] = '\0';
+    if (udp_socket_write(sd, (struct sockaddr_in *)addr, buffer, (int)len + 1) < 0) {
+        fprintf(stderr, "server send failed (%s)\n", strerror(errno));
+        perror("udp_socket_write");
+    }
+}
+
 void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name) {
     pthread_rwlock_rdlock(&s->rwlock);
     struct client_node *cur = s->head;
@@ -199,7 +213,7 @@ void say_message(struct server_state *s, int sd, const char *msg, const char *se
             cur = cur->next;
             continue;
         }
-        udp_socket_write(sd, &cur->addr, (char *)msg, (int)strlen(msg) + 1);
+        send_with_newline(sd, &cur->addr, msg);
         cur = cur->next;
     }
     pthread_rwlock_unlock(&s->rwlock);
@@ -215,7 +229,7 @@ int say_to(struct server_state*s, int sd, const char *msg, const char *recipient
                 pthread_rwlock_unlock(&s->rwlock);
                 return 0; 
             }
-            udp_socket_write(sd, &cur->addr, (char *)msg, (int)strlen(msg) + 1);
+            send_with_newline(sd, &cur->addr, msg);
             pthread_rwlock_unlock(&s->rwlock);
             return 0;
         }
@@ -257,20 +271,19 @@ static void handle_request(struct request *req) {
     *dollar = '\0';
     char *cmd = p;
     char *args = skip_spaces(dollar + 1);
-
     // conn$ client_name
     if (strcmp(cmd, "conn") == 0) {
         if (add_client(req->state, &req->src, args) == 0) {
             char msg[256];
             snprintf(msg, sizeof(msg),
                      "Hi %s, you have successfully connected to the chat", args);
-            udp_socket_write(req->sd, &req->src, msg, strlen(msg)+1);
+            send_with_newline(req->sd, &req->src, msg);
             
             pthread_rwlock_rdlock(&req->state->rwlock);
             message_queue *q = &req->state->msg_queue;
             int idx = q->head;
             for (int i = 0; i < q->size; i++) {
-                udp_socket_write(req->sd, &req->src, q->messages[idx], strlen(q->messages[idx]) + 1);
+                send_with_newline(req->sd, &req->src, q->messages[idx]);
                 idx = (idx + 1) % 15;
             }
             pthread_rwlock_unlock(&req->state->rwlock);
@@ -314,7 +327,7 @@ static void handle_request(struct request *req) {
     if (strcmp(cmd, "disconn") == 0) {
         remove_client_by_addr(req->state, &req->src);
         char bye[] = "Disconnected. Bye!";
-        udp_socket_write(req->sd, &req->src, bye, sizeof(bye));
+        send_with_newline(req->sd, &req->src, bye);
         return;
     }
 
@@ -353,7 +366,7 @@ static void handle_request(struct request *req) {
             char msg[256];
             snprintf(msg, sizeof(msg),
                      "You are now known as %s", args);
-            udp_socket_write(req->sd, &req->src, msg, strlen(msg)+1);
+            send_with_newline(req->sd, &req->src, msg);
         }
         return;
     }
@@ -366,7 +379,7 @@ static void handle_request(struct request *req) {
         char notify[256];
         snprintf(notify, sizeof(notify),
                  "You have been removed from the chat");
-        udp_socket_write(req->sd, &client->addr,notify, strlen(notify)+1);
+        send_with_newline(req->sd, &client->addr, notify);
         remove_client_by_name(req->state, args);
         char bc[256];
         snprintf(bc, sizeof(bc),
@@ -404,6 +417,7 @@ void *listener_thread(void *arg) {
         socklen_t srclen = sizeof(req->src);
         req->len = udp_socket_read(sd, &req->src, req->buf, BUFFER_SIZE);
         if (req->len < 0) {
+            perror("udp_socket_read");
             free(req);
             continue;
         }
@@ -420,6 +434,12 @@ int main() {
     init_server_state(&state);
 
     int sd = udp_socket_open(SERVER_PORT);
+    if (sd < 0) {
+        fprintf(stderr, "Server failed to open UDP socket on port %d\n", SERVER_PORT);
+        perror("udp_socket_open");
+        destroy_server_state(&state);
+        return 1;
+    }
 
     struct listener_args args;
     args.sd = sd;
@@ -435,4 +455,3 @@ int main() {
     destroy_server_state(&state);
     return 0;
 }
-

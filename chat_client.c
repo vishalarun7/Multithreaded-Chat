@@ -8,14 +8,36 @@
 #include <fcntl.h>
 #include "udp.h"
 
-#define CHAT_LOG_FILE "iChat.txt"
+#define GLOBAL_LOG_FILE "global.txt"
+#define ROOM_LOG_FILE "room.txt"
+#define PRIV_LOG_FILE "priv.txt"
 
 struct client_context {
     int sd;
     struct sockaddr_in server_addr;
-    FILE *log_fp;
+    FILE *global_log_fd;
+    FILE *room_log_fd;
+    FILE *priv_log_fd;
     volatile sig_atomic_t running;
 };
+
+static int initialise_log_file(const char *path, FILE **fp, const char *label) {
+    FILE *file = fopen(path, "w");
+    if (!file) {
+        fprintf(stderr, "Failed to reset %s log (%s): %s\n", label, path, strerror(errno));
+        return -1;
+    }
+    fclose(file);
+
+    file = fopen(path, "a");
+    if (!file) {
+        fprintf(stderr, "Failed to open %s log (%s): %s\n", label, path, strerror(errno));
+        return -1;
+    }
+
+    *fp = file;
+    return 0;
+}
 
 static void trim_newline(char *line) {
     size_t len = strlen(line);
@@ -44,17 +66,22 @@ static void *listener_thread(void *arg) {
             if (errno == EINTR) continue;
 
             fprintf(stderr, "listener: recv failed (%s)\n", strerror(errno));
+            perror("udp_socket_read");
             ctx->running = 0;
             break;
         }
 
         buffer[rc] = '\0';
 
-        fprintf(ctx->log_fp, "%s", buffer);
-        fflush(ctx->log_fp);
+        size_t msg_len = strnlen(buffer, BUFFER_SIZE);
+        if (msg_len == 0)
+            continue;
 
-        printf("%s", buffer);
-        fflush(stdout);
+        fwrite(buffer, 1, msg_len, ctx->global_log_fd);
+        if (buffer[msg_len - 1] != '\n') {
+            fputc('\n', ctx->global_log_fd);
+        }
+        fflush(ctx->global_log_fd);
     }
 
     return NULL;
@@ -81,6 +108,7 @@ static void *sender_thread(void *arg) {
         int rc = udp_socket_write(ctx->sd, &ctx->server_addr, request, (int)strlen(request) + 1);
         if (rc < 0) {
             fprintf(stderr, "sender: send failed (%s)\n", strerror(errno));
+            perror("udp_socket_write");
             ctx->running = 0;
             break;
         }
@@ -113,6 +141,7 @@ int main(int argc, char *argv[])
     int sd = udp_socket_open(client_port);
     if (sd < 0) {
         fprintf(stderr, "Failed to open UDP socket on port %d\n", client_port);
+        perror("udp_socket_open");
         return EXIT_FAILURE;
     }
 
@@ -126,18 +155,25 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // Truncate the log at startup so no previous session messages remain
-    FILE *log_fp = fopen(CHAT_LOG_FILE, "w");
-    if (!log_fp) {
-        perror("Failed to reset chat log");
+    // initialize log files
+    FILE *global_log_fd = NULL;
+    FILE *room_log_fd = NULL;
+    FILE *priv_log_fd = NULL;
+
+    if (initialise_log_file(GLOBAL_LOG_FILE, &global_log_fd, "global") < 0) {
         close(sd);
         return EXIT_FAILURE;
     }
-    fclose(log_fp);
 
-    log_fp = fopen(CHAT_LOG_FILE, "a");
-    if (!log_fp) {
-        perror("Failed to open chat log");
+    if (initialise_log_file(ROOM_LOG_FILE, &room_log_fd, "room") < 0) {
+        fclose(global_log_fd);
+        close(sd);
+        return EXIT_FAILURE;
+    }
+
+    if (initialise_log_file(PRIV_LOG_FILE, &priv_log_fd, "private") < 0) {
+        fclose(global_log_fd);
+        fclose(room_log_fd);
         close(sd);
         return EXIT_FAILURE;
     }
@@ -145,7 +181,9 @@ int main(int argc, char *argv[])
     struct client_context ctx = {
         .sd = sd,
         .server_addr = server_addr,
-        .log_fp = log_fp,
+        .global_log_fd = global_log_fd,
+        .room_log_fd = room_log_fd,
+        .priv_log_fd = priv_log_fd,
         .running = 1
     };
 
@@ -159,7 +197,9 @@ int main(int argc, char *argv[])
 
     pthread_join(listener, NULL);
 
-    fclose(log_fp);
+    fclose(global_log_fd);
+    fclose(room_log_fd);
+    fclose(priv_log_fd);
     close(sd);
     return 0;
 }
