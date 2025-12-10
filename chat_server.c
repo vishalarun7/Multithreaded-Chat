@@ -276,7 +276,7 @@ static void handle_request(struct request *req) {
         if (add_client(req->state, &req->src, args) == 0) {
             char msg[256];
             snprintf(msg, sizeof(msg),
-                     "Hi %s, you have successfully connected to the chat", args);
+                     "[Server] %s successfully connected", args);
             send_with_newline(req->sd, &req->src, msg);
             
             pthread_rwlock_rdlock(&req->state->rwlock);
