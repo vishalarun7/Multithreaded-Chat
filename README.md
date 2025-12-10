@@ -3,6 +3,10 @@
 
 A multithreaded client–server chat system written in **C**, featuring a **GTK-based graphical client interface**, **UDP networking**, and a **custom circular message queue** to maintain recent chat history.
 
+## Preview
+
+![Chat client UI](Screenshot 2025-12-10 at 10.22.08 PM.png)
+
 ---
 
 # Table of Contents
@@ -20,17 +24,17 @@ A multithreaded client–server chat system written in **C**, featuring a **GTK-
 # Repository Layout
 
 MULTITHREADED-CHAT/
-├── chat_client.c # GTK-based client implementation
-├── chat_client # Compiled client binary
-├── chat_server.c # Server implementation
+├── chat_client.c        # GTK client implementation
+├── chat_client          # Compiled client binary
+├── chat_server.c        # Server source code
 ├── chat_server.h
-├── chat_server # Compiled server binary
-├── circular_queue.c # Circular queue implementation (PE1)
+├── chat_server          # Compiled server binary
+├── circular_queue.c     # Circular queue implementation (PE1)
 ├── circular_queue.h
-├── udp.h # UDP networking utilities
-├── client # Optional client launcher script
-├── server # Optional server launcher script
-└── iChat.txt # Test logs / sample chat history
+├── udp.h                # Networking utilities
+├── client               # Optional client launcher
+├── server               # Optional server launcher
+└── iChat.txt            # Test logs / example chat logs
 
 
 
@@ -39,28 +43,37 @@ MULTITHREADED-CHAT/
 Requires **GTK+ 3.0**.
 
 ### Compile Command:
+```
 gcc chat_client.c -lpthread $(pkg-config --cflags --libs gtk+-3.0) -o client
+```
 
 ---
 
 ## Building the Server
 
 ### Compile Command:
+```
 gcc chat_server.c circular_queue.c -lpthread -o server
+```
 
 ---
 
 ## Running the Application
 
 ### Start the server:
+```
 ./server
+```
 
 ### Launch a client:
+```
 ./client
+```
 
 Multiple clients may run simultaneously.
+```
 
----
+***
 
 # Core Functionality
 
@@ -111,18 +124,6 @@ When a new client connects, the server immediately sends the most recent message
 
 ---
 
-# Proposed Extensions
-
-Implemented:
-- **PE1: Circular Message Queue**
-
-Possible future improvements:
-- GUI enhancements  
-- Chat room / channel support  
-- File transfer support  
-- Persistent message logging  
-
----
 
 # Dependencies
 
