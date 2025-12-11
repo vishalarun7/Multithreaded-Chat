@@ -16,5 +16,6 @@ void activity_heap_destroy(struct activity_heap *heap);
 int activity_heap_push(struct activity_heap *heap, struct client_node *client);
 void activity_heap_remove(struct activity_heap *heap, struct client_node *client);
 void activity_heap_update(struct activity_heap *heap, struct client_node *client);
+struct client_node *activity_heap_peek(struct activity_heap *heap);
 
 #endif // ACTIVITY_HEAP_H

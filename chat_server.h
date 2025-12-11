@@ -16,6 +16,8 @@ struct client_node {
     char muted[MAX_MUTED][MAX_NAME_LEN];
     int muted_count;
     time_t last_active;
+    time_t last_ping_sent;
+    int waiting_ping;
     int heap_index;
     struct client_node *next;
 };

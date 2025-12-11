@@ -90,7 +90,7 @@ void activity_heap_remove(struct activity_heap *heap, struct client_node *client
     }
     heap->size--;
     if ((size_t)idx < heap->size) {
-        activity_heap_heapify_down(heap, (size_t)idx);
+        activity_heap_heapify_down(heap, (size_t)idx); // just moved last place to where it was so now reorder it again
         activity_heap_heapify_up(heap, (size_t)idx);
     }
     client->heap_index = -1;
@@ -103,4 +103,10 @@ void activity_heap_update(struct activity_heap *heap, struct client_node *client
     if (idx < 0 || (size_t)idx >= heap->size) return;
     activity_heap_heapify_down(heap, (size_t)idx);
     activity_heap_heapify_up(heap, (size_t)idx);
+}
+
+// Returns the client with the smallest last_active timestamp
+struct client_node *activity_heap_peek(struct activity_heap *heap) {
+    if (!heap || heap->size == 0) return NULL;
+    return heap->nodes[0];
 }

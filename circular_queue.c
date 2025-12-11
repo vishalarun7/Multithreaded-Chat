@@ -18,4 +18,4 @@ void enqueue(message_queue *q, const char *msg){
     } else {
         q->head = (q->head + 1) % 15;
     }
-};
+}
