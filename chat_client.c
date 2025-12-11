@@ -325,7 +325,7 @@ static void *sender_thread(void *arg) {
     return NULL;
 }
 
-// Program entry: parses CLI args, starts GTK + worker threads, and runs the loop.
+// Program entry: starts GTK + worker threads, and runs the loop.
 int main(int argc, char *argv[])
 {
     gtk_init(&argc, &argv);
