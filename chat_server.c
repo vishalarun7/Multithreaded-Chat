@@ -275,8 +275,7 @@ static void handle_request(struct request *req) {
     if (strcmp(cmd, "conn") == 0) {
         if (add_client(req->state, &req->src, args) == 0) {
             char msg[256];
-            snprintf(msg, sizeof(msg),
-                     "[Server] %s successfully connected", args);
+            snprintf(msg, sizeof(msg), "[Server] %s successfully connected", args);
             send_with_newline(req->sd, &req->src, msg);
             
             pthread_rwlock_rdlock(&req->state->rwlock);
@@ -326,7 +325,7 @@ static void handle_request(struct request *req) {
     // disconn$
     if (strcmp(cmd, "disconn") == 0) {
         remove_client_by_addr(req->state, &req->src);
-        char bye[] = "Disconnected. Bye!";
+        char bye[] = "[Server] Disconnected. Bye!";
         send_with_newline(req->sd, &req->src, bye);
         return;
     }
@@ -364,8 +363,7 @@ static void handle_request(struct request *req) {
         strncpy(old, sender->name, MAX_NAME_LEN);
         if (rename_client(req->state, &req->src, args) == 0) {
             char msg[256];
-            snprintf(msg, sizeof(msg),
-                     "You are now known as %s", args);
+            snprintf(msg, sizeof(msg), "[Server] You are now known as %s", args);
             send_with_newline(req->sd, &req->src, msg);
         }
         return;
@@ -375,17 +373,22 @@ static void handle_request(struct request *req) {
     if (strcmp(cmd, "kick") == 0) {
         struct client_node *client = find_client_by_name(req->state, args);
         if (!client) return;
-
-        char notify[256];
-        snprintf(notify, sizeof(notify),
-                 "You have been removed from the chat");
-        send_with_newline(req->sd, &client->addr, notify);
-        remove_client_by_name(req->state, args);
-        char bc[256];
-        snprintf(bc, sizeof(bc),
-                 "%s has been removed from the chat", args);
-        say_message(req->state, req->sd, bc, NULL);
-        return;
+        if (ntohs(req->src.sin_port) != 6666) { // not admin
+            char notify[256];
+            snprintf(notify, sizeof(notify), "[Server] You are not an admin");
+            send_with_newline(req->sd, &req->src, notify);
+            return;
+        }
+        else{ // admin
+            char notify[256];
+            snprintf(notify, sizeof(notify), "[Server] You have been removed from the chat. disconn$ to close safely or conn$ <name> to join back");
+            send_with_newline(req->sd, &client->addr, notify);
+            remove_client_by_name(req->state, args);
+            char bc[256];
+            snprintf(bc, sizeof(bc), "[Server] %s has been removed from the chat", args);
+            say_message(req->state, req->sd, bc, NULL);
+            return;
+        }
     }
 }
 

@@ -32,9 +32,10 @@ struct client_context {
     FILE *priv_log_fd;
     struct ui_context ui;
     volatile sig_atomic_t running;
+    volatile sig_atomic_t sender_active;
 };
 
-static GAsyncQueue *send_queue;
+static GAsyncQueue *send_queue; // queue of tokens to send to sender_thread (inputs, close token and disconn$)
 static gpointer queue_quit_token = GINT_TO_POINTER(1); // closes gkt properly
 
 struct append_request {
@@ -43,6 +44,7 @@ struct append_request {
     char *text;
 };
 
+// Resets the log on disk and reopens it in append mode for the requested channel.
 static int initialise_log_file(const char *path, FILE **fp, const char *label) {
     FILE *file = fopen(path, "w");
     if (!file) {
@@ -61,6 +63,7 @@ static int initialise_log_file(const char *path, FILE **fp, const char *label) {
     return 0;
 }
 
+// Removes a single trailing newline so outgoing commands stay on one line.
 static void trim_newline(char *line) {
     size_t len = strlen(line);
     if (len > 0 && line[len - 1] == '\n') {
@@ -68,10 +71,12 @@ static void trim_newline(char *line) {
     }
 }
 
+// Identifies the disconnect command so the sender can shut down.
 static int request_is_disconnect(const char *req) {
     return strncmp(req, "disconn$", 8) == 0;
 }
 
+// Runs inside the GTK main loop to append received text to a buffer.
 static gboolean append_dispatch(gpointer data) {
     struct append_request *req = data;
     GtkTextIter iter;
@@ -84,6 +89,7 @@ static gboolean append_dispatch(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+// Queues a text insert into the UI from worker threads using g_idle_add.
 static void schedule_append(struct ui_context *ui, GtkWidget *view, GtkTextBuffer *buffer, const char *msg) {
     if (!ui || !view || !buffer || !msg) return;
     struct append_request *req = g_new0(struct append_request, 1);
@@ -97,12 +103,25 @@ static void schedule_append(struct ui_context *ui, GtkWidget *view, GtkTextBuffe
     g_idle_add(append_dispatch, req);
 }
 
+// Stops the GTK main loop when scheduled from worker threads.
 static gboolean quit_idle(gpointer data) {
     (void)data;
     gtk_main_quit();
     return G_SOURCE_REMOVE;
 }
 
+// Enqueues a disconnect request so the sender thread notifies the server.
+static void notify_server_disconnect(struct client_context *ctx) {
+    if (!ctx || !send_queue) return;
+    char *msg = g_strdup("disconn$");
+    if (!msg) {
+        fprintf(stderr, "client: failed to allocate disconnect request\n");
+        return;
+    }
+    g_async_queue_push(send_queue, msg);
+}
+
+// Builds a titled text-view section for the logs UI and returns the container widget.
 static GtkWidget *create_log_section(const char *title,
                                      GtkWidget **view_out,
                                      GtkTextBuffer **buffer_out) {
@@ -139,6 +158,7 @@ static GtkWidget *create_log_section(const char *title,
     return section;
 }
 
+// Reads user commands from the entry widget and pushes them onto the send queue.
 static void on_entry_activate(GtkEntry *entry, gpointer user_data) {
     struct client_context *ctx = user_data;
     const char *text = gtk_entry_get_text(entry);
@@ -153,14 +173,17 @@ static void on_entry_activate(GtkEntry *entry, gpointer user_data) {
     gtk_entry_set_text(entry, "");
 }
 
+// Initiates a graceful shutdown when the user closes the GTK window.
 static void on_window_destroy(GtkWidget *widget, gpointer user_data) {
     (void)widget;
     struct client_context *ctx = user_data;
+    if (ctx && ctx->sender_active)
+        notify_server_disconnect(ctx);
     ctx->running = 0;
-    if (send_queue) g_async_queue_push(send_queue, queue_quit_token);
     gtk_main_quit();
 }
 
+// Creates all GTK widgets, hooks up callbacks, and shows the main window.
 static void setup_ui(struct ui_context *ui, struct client_context *ctx) {
     memset(ui, 0, sizeof(*ui));
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -215,10 +238,12 @@ static void setup_ui(struct ui_context *ui, struct client_context *ctx) {
     ui->window = window;
 }
 
+// Schedules gtk_main_quit to run on the UI thread.
 static void schedule_quit(void) {
     g_idle_add(quit_idle, NULL);
 }
 
+// Receives UDP packets from the server, logs them, and updates the Global view.
 static void *listener_thread(void *arg) {
     struct client_context *ctx = (struct client_context *)arg;
     char buffer[BUFFER_SIZE];
@@ -259,10 +284,11 @@ static void *listener_thread(void *arg) {
     return NULL;
 }
 
+// Pulls commands from the async queue and sends them to the server over UDP.
 static void *sender_thread(void *arg) {
     struct client_context *ctx = (struct client_context *)arg;
 
-    while (ctx->running) {
+    while (1) {
         gpointer item = g_async_queue_pop(send_queue);
         if (item == queue_quit_token)
             break;
@@ -295,9 +321,11 @@ static void *sender_thread(void *arg) {
         g_free(request);
     }
 
+    ctx->sender_active = 0;
     return NULL;
 }
 
+// Program entry: parses CLI args, starts GTK + worker threads, and runs the loop.
 int main(int argc, char *argv[])
 {
     gtk_init(&argc, &argv);
@@ -360,7 +388,8 @@ int main(int argc, char *argv[])
         .global_log_fd = global_log_fd,
         .room_log_fd = room_log_fd,
         .priv_log_fd = priv_log_fd,
-        .running = 1
+        .running = 1,
+        .sender_active = 1
     };
 
     send_queue = g_async_queue_new();
@@ -373,7 +402,8 @@ int main(int argc, char *argv[])
     gtk_main();
 
     ctx.running = 0;
-    if (send_queue) g_async_queue_push(send_queue, queue_quit_token);
+    if (send_queue && ctx.sender_active)
+        g_async_queue_push(send_queue, queue_quit_token);
 
     pthread_join(sender, NULL);
     pthread_join(listener, NULL);
