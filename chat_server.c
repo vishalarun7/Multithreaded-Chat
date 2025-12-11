@@ -11,7 +11,7 @@
 #include <string.h>
 #include "circular_queue.h"
 
-#define INACTIVITY_THRESHOLD 20
+#define INACTIVITY_THRESHOLD 300
 #define PING_TIMEOUT 10
 #define PING_MONITOR_SLEEP_USEC 500000
 

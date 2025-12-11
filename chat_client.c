@@ -103,16 +103,6 @@ static void schedule_append(struct ui_context *ui, GtkWidget *view, GtkTextBuffe
     g_idle_add(append_dispatch, req);
 }
 
-// Initiates a graceful shutdown when the user closes the GTK window.
-static void on_window_destroy(GtkWidget *widget, gpointer user_data) {
-    (void)widget;
-    struct client_context *ctx = user_data;
-    if (ctx && ctx->sender_active)
-        notify_server_disconnect(ctx);
-    ctx->running = 0;
-    gtk_main_quit();
-}
-
 // Stops the GTK main loop when scheduled from worker threads.
 static gboolean quit_idle(gpointer data) {
     (void)data;
@@ -134,6 +124,16 @@ static void notify_server_disconnect(struct client_context *ctx) {
         return;
     }
     g_async_queue_push(send_queue, msg);
+}
+
+// Initiates a graceful shutdown when the user closes the GTK window.
+static void on_window_destroy(GtkWidget *widget, gpointer user_data) {
+    (void)widget;
+    struct client_context *ctx = user_data;
+    if (ctx && ctx->sender_active)
+        notify_server_disconnect(ctx);
+    ctx->running = 0;
+    gtk_main_quit();
 }
 
 // Builds a titled text-view section for the logs UI and returns the container widget.
@@ -273,13 +273,24 @@ static void *listener_thread(void *arg) {
         if (msg_len == 0)
             continue;
 
-        fwrite(buffer, 1, msg_len, ctx->global_log_fd);
-        if (buffer[msg_len - 1] != '\n') {
-            fputc('\n', ctx->global_log_fd);
-        }
-        fflush(ctx->global_log_fd);
+        if(strncmp(buffer, "ping$", strlen("ping$")) != 0){
+            fwrite(buffer, 1, msg_len, ctx->global_log_fd);
+            if (buffer[msg_len - 1] != '\n') {
+                fputc('\n', ctx->global_log_fd);
+            }
+            fflush(ctx->global_log_fd);
 
-        schedule_append(&ctx->ui, ctx->ui.global_view, ctx->ui.global_buffer, buffer);
+            schedule_append(&ctx->ui, ctx->ui.global_view, ctx->ui.global_buffer, buffer);
+        }
+        else{
+            //send re-ping$
+            char *msg = g_strdup("re-ping$");
+            if (!msg) {
+                fprintf(stderr, "client: failed to allocate disconnect request\n");
+                break;
+            }
+            g_async_queue_push(send_queue, msg);
+        }
     }
 
     return NULL;
