@@ -103,11 +103,26 @@ static void schedule_append(struct ui_context *ui, GtkWidget *view, GtkTextBuffe
     g_idle_add(append_dispatch, req);
 }
 
+// Initiates a graceful shutdown when the user closes the GTK window.
+static void on_window_destroy(GtkWidget *widget, gpointer user_data) {
+    (void)widget;
+    struct client_context *ctx = user_data;
+    if (ctx && ctx->sender_active)
+        notify_server_disconnect(ctx);
+    ctx->running = 0;
+    gtk_main_quit();
+}
+
 // Stops the GTK main loop when scheduled from worker threads.
 static gboolean quit_idle(gpointer data) {
     (void)data;
     gtk_main_quit();
     return G_SOURCE_REMOVE;
+}
+
+// Schedules gtk_main_quit to run on the UI thread.
+static void schedule_quit(void) {
+    g_idle_add(quit_idle, NULL);
 }
 
 // Enqueues a disconnect request so the sender thread notifies the server.
@@ -173,16 +188,6 @@ static void on_entry_activate(GtkEntry *entry, gpointer user_data) {
     gtk_entry_set_text(entry, "");
 }
 
-// Initiates a graceful shutdown when the user closes the GTK window.
-static void on_window_destroy(GtkWidget *widget, gpointer user_data) {
-    (void)widget;
-    struct client_context *ctx = user_data;
-    if (ctx && ctx->sender_active)
-        notify_server_disconnect(ctx);
-    ctx->running = 0;
-    gtk_main_quit();
-}
-
 // Creates all GTK widgets, hooks up callbacks, and shows the main window.
 static void setup_ui(struct ui_context *ui, struct client_context *ctx) {
     memset(ui, 0, sizeof(*ui));
@@ -238,10 +243,6 @@ static void setup_ui(struct ui_context *ui, struct client_context *ctx) {
     ui->window = window;
 }
 
-// Schedules gtk_main_quit to run on the UI thread.
-static void schedule_quit(void) {
-    g_idle_add(quit_idle, NULL);
-}
 
 // Receives UDP packets from the server, logs them, and updates the Global view.
 static void *listener_thread(void *arg) {
@@ -399,7 +400,7 @@ int main(int argc, char *argv[])
     pthread_create(&listener, NULL, listener_thread, &ctx);
     pthread_create(&sender, NULL, sender_thread, &ctx);
 
-    gtk_main();
+    gtk_main(); // enter GTK event loop until gtk_main_quit() is called
 
     ctx.running = 0;
     if (send_queue && ctx.sender_active)
