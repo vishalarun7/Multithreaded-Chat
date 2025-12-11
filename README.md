@@ -1,7 +1,13 @@
 
 # Multithreaded Chat Application
 
-A multithreaded client–server chat system written in **C**, featuring a **GTK-based graphical client interface**, **UDP networking**, and a **custom circular message queue** to maintain recent chat history.
+A multithreaded client–server chat system written in **C**, featuring:
+
+- **GTK-based GUI client** for a modern conversation view  
+- **UDP networking** for response/requests
+- **Circular message queue** for replaying recent history  
+- **Min-heap** for automatic removal of inactive clients
+- **Chat rooms** for talking to specific members
 
 ## Preview
 
@@ -9,125 +15,146 @@ A multithreaded client–server chat system written in **C**, featuring a **GTK-
 
 ---
 
-# Table of Contents
+## Table of Contents
 
-1. [Repository Layout](#repository-layout)  
-2. [Building & Running](#building--running)  
-3. [Core Functionality](#core-functionality)  
-4. [Command Execution](#command-execution)  
-5. [Circular Queue (PE1)](#circular-queue-pe1)  
-6. [Proposed Extensions](#proposed-extensions)  
-7. [Dependencies](#dependencies)
+1. [Overview](#overview)  
+2. [Repository Layout](#repository-layout)  
+3. [Dependencies, Building & Running](#dependencies-building--running)  
+   - [Requirements](#requirements)  
+   - [Build Commands](#build-commands)  
+   - [Run Commands](#run-commands)  
+4. [Core Functionality](#core-functionality)  
+5. [Command Reference](#command-reference)  
+6. [Visualisations](#visualisations)  
+7. [Proposed Extensions](#proposed-extensions)
 
 ---
 
-# Repository Layout
+## Overview
 
-MULTITHREADED-CHAT/
-├── chat_client.c        # GTK client implementation
-├── chat_client          # Compiled client binary
-├── chat_server.c        # Server source code
-├── chat_server.h
-├── chat_server          # Compiled server binary
-├── circular_queue.c     # Circular queue implementation (PE1)
-├── circular_queue.h
-├── udp.h                # Networking utilities
-├── client               # Optional client launcher
-├── server               # Optional server launcher
-└── iChat.txt            # Test logs / example chat logs
+- Multithreaded UDP server dispatching per-request worker threads  
+- GTK client with separate panes for global, room, and private logs  
+- Circular queue (PE1) to replay recent history on connect  
+- Min-heap monitor (PE2) to ping and remove inactive clients
 
+---
 
+## Repository Layout
 
-## Building the Client (GTK UI)
-
-Requires **GTK+ 3.0**.
-
-### Compile Command:
 ```
+Multithreaded-Chat/
+├── activity_heap.c/.h    # Min-heap for inactivity tracking (PE2)
+├── chat_client.c         # GTK client implementation
+├── chat_server.c/.h      # Server logic + state
+├── circular_queue.c/.h   # Message history buffer (PE1)
+├── udp.h                 # UDP socket helpers
+├── logs/                 # Client log outputs
+├── client / server       # Convenience launchers (optional)
+└── Preview.png           # GUI screenshot
+```
+
+---
+
+## Dependencies, Building & Running
+
+### Requirements
+
+- **GCC / Clang** (C11)
+- **POSIX threads (pthread)**
+- **GTK+ 3.0 & pkg-config** (client build)
+
+#### Installing GTK+ (Ubuntu/Debian)
+
+```bash
+sudo apt update
+sudo apt install build-essential pkg-config libgtk-3-dev
+```
+
+#### Installing GTK+ (Fedora)
+
+```bash
+sudo dnf install @development-tools pkgconf-pkg-config gtk3-devel
+```
+
+On macOS, install via Homebrew: `brew install gtk+3`.
+
+### Build Commands
+
+**Server**
+```bash
+gcc chat_server.c circular_queue.c activity_heap.c -lpthread -o server
+```
+
+**Client (GTK UI)**
+```bash
 gcc chat_client.c -lpthread $(pkg-config --cflags --libs gtk+-3.0) -o client
 ```
 
----
+### Run Commands
 
-## Building the Server
-
-### Compile Command:
-```
-gcc chat_server.c circular_queue.c -lpthread -o server
-```
-
----
-
-## Running the Application
-
-### Start the server:
-```
+**Start the server**
+```bash
 ./server
 ```
 
-### Launch a client:
+**Launch a client**
+```bash
+./client [server_ip] [client_port]
 ```
-./client
-```
 
-Multiple clients may run simultaneously.
+- `server_ip` defaults to `127.0.0.1`
+- `client_port` defaults to `0` (choose a fixed port like `./client 192.168.1.50 6001` if needed)
 
-
-***
-
-# Core Functionality
-
-## Client–Server Workflow
-
-Clients communicate with the server using custom text-based commands.
-
-The server supports:
-
-- Broadcasting messages
-- Private messaging
-- Username management
-- Muting/unmuting users
-- Sending recent message history
-- Multithreaded client handling
+Multiple clients may run simultaneously; logs land in `logs/`.
 
 ---
 
-# Command Execution
+## Core Functionality
 
-Command Format | Description
--------------- | -----------
-conn$ client_name | Connect to the server with a username
-say$ msg | Broadcast a message to all users
-sayto$ recipient_name msg | Send a private message to a specific user
-mute$ client_name | Mute a user
-unmute$ client_name | Unmute a user
-rename$ new_name | Change your username
-disconn$ | Disconnect from the server
-kick$ client_name | **Admin only:** forcefully disconnect a user
+- Multithreaded server processes each UDP request on a detached worker thread.  
+- Circular queue stores the last 15 broadcasts; newcomers receive this history on `conn$`.  
+- Clients can broadcast, direct-message, rename, mute/unmute, disconnect, or request admin kicks.  
+- GTK client logs all messages to disk and scrolls logs automatically.  
+- Inactivity monitor: the server tracks `last_active` timestamps in a min-heap and pings stale clients automatically.
 
 ---
 
-# Circular Queue (PE1)
+## Command Reference
 
-A **fixed-size (15 messages)** circular queue is implemented on the server to store recent chat history.
-
-## Properties
-
-- `head` points to the **oldest** stored message  
-- `tail` points to the **insertion index (newest + 1)**  
-- When full, inserting a new message **overwrites the oldest**  
-- Enqueue operation is **O(1)**  
-
-## Purpose
-
-When a new client connects, the server immediately sends the most recent messages as chat history.
+| Command | Description |
+| ------- | ----------- |
+| `conn$ <name>` | Connect to the server with the chosen username |
+| `say$ <msg>` | Broadcast a message to everyone |
+| `sayto$ <recipient> <msg>` | Send a private message |
+| `mute$ <name>` | Ignore messages from a user |
+| `unmute$ <name>` | Remove an existing mute |
+| `rename$ <new_name>` | Change your username |
+| `disconn$` | Disconnect cleanly |
+| `kick$ <name>` | **Admin-only (port 6666)** – eject a user |
+| `ping$` / `ret-ping$` | Keepalive pair used by PE2 (responses handled automatically by the client) |
 
 ---
 
+## Visualisations
 
-# Dependencies
+The GTK client renders three scrollable panes—**Global**, **Room**, and **Private**—so activity stays organized. Incoming messages are appended on the GTK main loop via idle callbacks, ensuring thread-safe UI updates. Each log panel uses consistent styling (dark theme, rounded sections) to highlight the current conversation and provide an at-a-glance chat history.
 
-- **C (GCC)**
-- **POSIX Threads (pthread)**
-- **GTK+ 3.0** (client)
-- **pkg-config** (for GTK build flags)
+---
+
+## Proposed Extensions
+
+### PE1 – Circular Queue
+
+The server keeps the last 15 global messages in a circular buffer (`circular_queue.c`). New arrivals replay this history immediately after connecting, giving them context without overloading the network. Enqueue operations are O(1), and the queue automatically overwrites the oldest entry when full.
+
+### PE2 – Remove Inactive Clients
+
+A thread-safe min-heap (`activity_heap.c`) stores `(last_active, client)` pairs ordered by timestamp. A dedicated ping monitor thread:
+
+1. Peeks at the oldest entry.  
+2. Sends `ping$` if the client has been idle for 5 minutes.  
+3. Removes the client if no `ret-ping$` arrives within 10 seconds, broadcasting a notice.
+
+All heap updates occur while holding the existing `pthread_rwlock_t`, so this extension remains thread safe—request handlers, client removal, and the monitor never manipulate the heap concurrently without the lock.
+
+---
