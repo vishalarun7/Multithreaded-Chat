@@ -1,18 +1,118 @@
 #include "udp.h"
 #include "chat_server.h"
 #include <stdio.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <errno.h>
 #include <assert.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <time.h>
+#include <string.h>
 #include "circular_queue.h"
+
+#define INACTIVITY_THRESHOLD 300
+#define PING_TIMEOUT 10
+#define PING_MONITOR_SLEEP_USEC 500000
+
+struct listener_args {
+    int sd;
+    struct server_state *state;
+};
+
+static void send_with_newline(int sd, const struct sockaddr_in *addr, const char *msg);
+void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name);
+int say_to(struct server_state *s, int sd, const char *msg, const char *recipient_name, const char *sender_name);
+
+static void update_client_activity(struct server_state *state, const struct sockaddr_in *addr) {
+    if (!state || !addr) return;
+    pthread_rwlock_wrlock(&state->rwlock);
+    struct client_node *cur = state->head;
+    while (cur) {
+        if (cur->addr.sin_addr.s_addr == addr->sin_addr.s_addr && cur->addr.sin_port == addr->sin_port) {
+            cur->last_active = time(NULL);
+            cur->waiting_ping = 0;
+            activity_heap_update(&state->activity, cur);
+            break;
+        }
+        cur = cur->next;
+    }
+    pthread_rwlock_unlock(&state->rwlock);
+}
+
+static void *ping_monitor_thread(void *arg) {
+    struct listener_args *args = arg;
+    int sd = args->sd;
+    struct server_state *state = args->state;
+
+    while (1) {
+        int action = 0;
+        struct sockaddr_in target_addr = {0};
+        char target_name[MAX_NAME_LEN] = {0};
+        useconds_t sleep_us = PING_MONITOR_SLEEP_USEC; // optimised time to sleep so thread doesnt waste time
+
+        pthread_rwlock_wrlock(&state->rwlock);
+        struct client_node *oldest = activity_heap_peek(&state->activity);
+        if (oldest) {
+            time_t now = time(NULL);
+            time_t idle = now - oldest->last_active;
+            if (idle >= INACTIVITY_THRESHOLD) {
+                if (!oldest->waiting_ping) {
+                    oldest->waiting_ping = 1;
+                    oldest->last_ping_sent = now;
+                    target_addr = oldest->addr;
+                    action = 1;
+                    sleep_us = PING_MONITOR_SLEEP_USEC;
+                } else if (now - oldest->last_ping_sent >= PING_TIMEOUT) {
+                    target_addr = oldest->addr;
+                    strncpy(target_name, oldest->name, MAX_NAME_LEN);
+                    target_name[MAX_NAME_LEN - 1] = '\0';
+                    action = 2;
+                    sleep_us = PING_MONITOR_SLEEP_USEC;
+                } else {
+                    time_t wait = (oldest->last_ping_sent + PING_TIMEOUT) - now;
+                    if (wait > 0) {
+                        sleep_us = (useconds_t)(wait * 1000000L);
+                    }
+                }
+            } else {
+                time_t wait = INACTIVITY_THRESHOLD - idle;
+                if (wait > 0){
+                    sleep_us = (useconds_t)(wait * 1000000L);
+                }
+                else{
+                    sleep_us = PING_MONITOR_SLEEP_USEC;
+                }
+            }
+        } else {
+            sleep_us = PING_MONITOR_SLEEP_USEC;
+        }
+        pthread_rwlock_unlock(&state->rwlock);
+
+        // separate so not in the lock
+        if (action == 1) {
+            send_with_newline(sd, &target_addr, "ping$");
+        } else if (action == 2) {
+            char notify[256];
+            snprintf(notify, sizeof(notify), "[Server] Disconnected due to inactivity. ");
+            send_with_newline(sd, &target_addr, notify);
+            remove_client_by_addr(state, &target_addr);
+            char bc[256];
+            snprintf(bc, sizeof(bc), "[Server] %s was disconnected due to inactivity", target_name);
+            say_message(state, sd, bc, NULL);
+        }
+
+        usleep(sleep_us); // sleep according to when next action is needed
+    }
+
+    return NULL;
+}
 
 void init_server_state(struct server_state *s) {
     s->head = NULL;
     queue_init(&s->msg_queue);
     pthread_rwlock_init(&s->rwlock, NULL);
-
+    activity_heap_init(&s->activity);
 }
 
 void destroy_server_state(struct server_state *s) {
@@ -26,6 +126,7 @@ void destroy_server_state(struct server_state *s) {
     s->head = NULL;
     pthread_rwlock_unlock(&s->rwlock);
     pthread_rwlock_destroy(&s->rwlock);
+    activity_heap_destroy(&s->activity);
 }
 
 struct client_node *find_client_by_name(struct server_state *s, const char *name) {
@@ -80,8 +181,18 @@ int add_client(struct server_state *s, const struct sockaddr_in *addr, const cha
     node->name[MAX_NAME_LEN - 1] = '\0';
     memcpy(&node->addr, addr, sizeof(*addr));
     node->muted_count = 0;
+    node->last_active = time(NULL);
+    node->last_ping_sent = 0;
+    node->waiting_ping = 0;
+    node->heap_index = -1;
     node->next = s->head;
     s->head = node;
+    if (activity_heap_push(&s->activity, node) != 0) {
+        s->head = node->next;
+        free(node);
+        pthread_rwlock_unlock(&s->rwlock);
+        return -1;
+    }
     pthread_rwlock_unlock(&s->rwlock);
     return 0;
 }
@@ -93,6 +204,7 @@ int remove_client_by_name(struct server_state *s, const char *name) {
         if (strncmp((*ind)->name, name, MAX_NAME_LEN) == 0) {
             struct client_node *del = *ind;
             *ind = del->next;
+            activity_heap_remove(&s->activity, del);
             free(del);
             pthread_rwlock_unlock(&s->rwlock);
             return 0;
@@ -113,6 +225,7 @@ int remove_client_by_addr(struct server_state *s, const struct sockaddr_in *addr
         {
             struct client_node *del = *ind;
             *ind = del->next;
+            activity_heap_remove(&s->activity, del);
             free(del);
             pthread_rwlock_unlock(&s->rwlock);
             return 0;
@@ -191,6 +304,20 @@ int is_muted_for_receiver(struct client_node *receiver, const char *sender_name)
     return 0;
 }
 
+static void send_with_newline(int sd, const struct sockaddr_in *addr, const char *msg) {
+    char buffer[BUFFER_SIZE];
+    size_t len = strnlen(msg, BUFFER_SIZE - 2);
+    memcpy(buffer, msg, len);
+    if (len == 0 || buffer[len - 1] != '\n') {
+        buffer[len++] = '\n';
+    }
+    buffer[len] = '\0';
+    if (udp_socket_write(sd, (struct sockaddr_in *)addr, buffer, (int)len + 1) < 0) {
+        fprintf(stderr, "server send failed (%s)\n", strerror(errno));
+        perror("udp_socket_write");
+    }
+}
+
 void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name) {
     pthread_rwlock_rdlock(&s->rwlock);
     struct client_node *cur = s->head;
@@ -199,7 +326,7 @@ void say_message(struct server_state *s, int sd, const char *msg, const char *se
             cur = cur->next;
             continue;
         }
-        udp_socket_write(sd, &cur->addr, (char *)msg, (int)strlen(msg) + 1);
+        send_with_newline(sd, &cur->addr, msg);
         cur = cur->next;
     }
     pthread_rwlock_unlock(&s->rwlock);
@@ -215,7 +342,7 @@ int say_to(struct server_state*s, int sd, const char *msg, const char *recipient
                 pthread_rwlock_unlock(&s->rwlock);
                 return 0; 
             }
-            udp_socket_write(sd, &cur->addr, (char *)msg, (int)strlen(msg) + 1);
+            send_with_newline(sd, &cur->addr, msg);
             pthread_rwlock_unlock(&s->rwlock);
             return 0;
         }
@@ -258,24 +385,30 @@ static void handle_request(struct request *req) {
     char *cmd = p;
     char *args = skip_spaces(dollar + 1);
 
+    if (strcmp(cmd, "conn") != 0) {
+        update_client_activity(req->state, &req->src);
+    }
     // conn$ client_name
     if (strcmp(cmd, "conn") == 0) {
         if (add_client(req->state, &req->src, args) == 0) {
             char msg[256];
-            snprintf(msg, sizeof(msg),
-                     "Hi %s, you have successfully connected to the chat", args);
-            udp_socket_write(req->sd, &req->src, msg, strlen(msg)+1);
+            snprintf(msg, sizeof(msg), "[Server] %s successfully connected", args);
+            send_with_newline(req->sd, &req->src, msg);
             
             pthread_rwlock_rdlock(&req->state->rwlock);
             message_queue *q = &req->state->msg_queue;
             int idx = q->head;
             for (int i = 0; i < q->size; i++) {
-                udp_socket_write(req->sd, &req->src, q->messages[idx], strlen(q->messages[idx]) + 1);
+                send_with_newline(req->sd, &req->src, q->messages[idx]);
                 idx = (idx + 1) % 15;
             }
             pthread_rwlock_unlock(&req->state->rwlock);
             }
             return;
+    }
+
+    if (strcmp(cmd, "ret-ping") == 0) {
+        return;
     }
 
     // say$ msg
@@ -313,8 +446,8 @@ static void handle_request(struct request *req) {
     // disconn$
     if (strcmp(cmd, "disconn") == 0) {
         remove_client_by_addr(req->state, &req->src);
-        char bye[] = "Disconnected. Bye!";
-        udp_socket_write(req->sd, &req->src, bye, sizeof(bye));
+        char bye[] = "[Server] Disconnected. Bye!";
+        send_with_newline(req->sd, &req->src, bye);
         return;
     }
 
@@ -351,9 +484,8 @@ static void handle_request(struct request *req) {
         strncpy(old, sender->name, MAX_NAME_LEN);
         if (rename_client(req->state, &req->src, args) == 0) {
             char msg[256];
-            snprintf(msg, sizeof(msg),
-                     "You are now known as %s", args);
-            udp_socket_write(req->sd, &req->src, msg, strlen(msg)+1);
+            snprintf(msg, sizeof(msg), "[Server] You are now known as %s", args);
+            send_with_newline(req->sd, &req->src, msg);
         }
         return;
     }
@@ -362,24 +494,24 @@ static void handle_request(struct request *req) {
     if (strcmp(cmd, "kick") == 0) {
         struct client_node *client = find_client_by_name(req->state, args);
         if (!client) return;
-
-        char notify[256];
-        snprintf(notify, sizeof(notify),
-                 "You have been removed from the chat");
-        udp_socket_write(req->sd, &client->addr,notify, strlen(notify)+1);
-        remove_client_by_name(req->state, args);
-        char bc[256];
-        snprintf(bc, sizeof(bc),
-                 "%s has been removed from the chat", args);
-        say_message(req->state, req->sd, bc, NULL);
-        return;
+        if (ntohs(req->src.sin_port) != 6666) { // not admin
+            char notify[256];
+            snprintf(notify, sizeof(notify), "[Server] You are not an admin");
+            send_with_newline(req->sd, &req->src, notify);
+            return;
+        }
+        else{ // admin
+            char notify[256];
+            snprintf(notify, sizeof(notify), "[Server] You have been removed from the chat. disconn$ to close safely or conn$ <name> to join back");
+            send_with_newline(req->sd, &client->addr, notify);
+            remove_client_by_name(req->state, args);
+            char bc[256];
+            snprintf(bc, sizeof(bc), "[Server] %s has been removed from the chat", args);
+            say_message(req->state, req->sd, bc, NULL);
+            return;
+        }
     }
 }
-
-struct listener_args {
-    int sd;                     // server socket descriptor
-    struct server_state *state; 
-};
 
 void *request_handler_thread(void *arg) {
     if (!arg) return NULL;
@@ -404,6 +536,7 @@ void *listener_thread(void *arg) {
         socklen_t srclen = sizeof(req->src);
         req->len = udp_socket_read(sd, &req->src, req->buf, BUFFER_SIZE);
         if (req->len < 0) {
+            perror("udp_socket_read");
             free(req);
             continue;
         }
@@ -420,19 +553,27 @@ int main() {
     init_server_state(&state);
 
     int sd = udp_socket_open(SERVER_PORT);
+    if (sd < 0) {
+        fprintf(stderr, "Server failed to open UDP socket on port %d\n", SERVER_PORT);
+        perror("udp_socket_open");
+        destroy_server_state(&state);
+        return 1;
+    }
 
     struct listener_args args;
     args.sd = sd;
     args.state = &state;
 
     pthread_t listener;
+    pthread_t pinger;
     pthread_create(&listener, NULL, listener_thread, &args);
+    pthread_create(&pinger, NULL, ping_monitor_thread, &args);
 
     printf("Server running on port %d...\n", SERVER_PORT);
 
     pthread_join(listener, NULL);
+    pthread_join(pinger, NULL);
 
     destroy_server_state(&state);
     return 0;
 }
-
