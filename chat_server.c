@@ -6,13 +6,30 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <time.h>
 #include "circular_queue.h"
+
+static void update_client_activity(struct server_state *state, const struct sockaddr_in *addr) {
+    if (!state || !addr) return;
+    pthread_rwlock_wrlock(&state->rwlock);
+    struct client_node *cur = state->head;
+    while (cur) {
+        if (cur->addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
+            cur->addr.sin_port == addr->sin_port) {
+            cur->last_active = time(NULL);
+            activity_heap_update(&state->activity, cur);
+            break;
+        }
+        cur = cur->next;
+    }
+    pthread_rwlock_unlock(&state->rwlock);
+}
 
 void init_server_state(struct server_state *s) {
     s->head = NULL;
     queue_init(&s->msg_queue);
     pthread_rwlock_init(&s->rwlock, NULL);
-
+    activity_heap_init(&s->activity);
 }
 
 void destroy_server_state(struct server_state *s) {
@@ -26,6 +43,7 @@ void destroy_server_state(struct server_state *s) {
     s->head = NULL;
     pthread_rwlock_unlock(&s->rwlock);
     pthread_rwlock_destroy(&s->rwlock);
+    activity_heap_destroy(&s->activity);
 }
 
 struct client_node *find_client_by_name(struct server_state *s, const char *name) {
@@ -80,8 +98,16 @@ int add_client(struct server_state *s, const struct sockaddr_in *addr, const cha
     node->name[MAX_NAME_LEN - 1] = '\0';
     memcpy(&node->addr, addr, sizeof(*addr));
     node->muted_count = 0;
+    node->last_active = time(NULL);
+    node->heap_index = -1;
     node->next = s->head;
     s->head = node;
+    if (activity_heap_push(&s->activity, node) != 0) {
+        s->head = node->next;
+        free(node);
+        pthread_rwlock_unlock(&s->rwlock);
+        return -1;
+    }
     pthread_rwlock_unlock(&s->rwlock);
     return 0;
 }
@@ -93,6 +119,7 @@ int remove_client_by_name(struct server_state *s, const char *name) {
         if (strncmp((*ind)->name, name, MAX_NAME_LEN) == 0) {
             struct client_node *del = *ind;
             *ind = del->next;
+            activity_heap_remove(&s->activity, del);
             free(del);
             pthread_rwlock_unlock(&s->rwlock);
             return 0;
@@ -113,6 +140,7 @@ int remove_client_by_addr(struct server_state *s, const struct sockaddr_in *addr
         {
             struct client_node *del = *ind;
             *ind = del->next;
+            activity_heap_remove(&s->activity, del);
             free(del);
             pthread_rwlock_unlock(&s->rwlock);
             return 0;
@@ -271,6 +299,10 @@ static void handle_request(struct request *req) {
     *dollar = '\0';
     char *cmd = p;
     char *args = skip_spaces(dollar + 1);
+
+    if (strcmp(cmd, "conn") != 0) {
+        update_client_activity(req->state, &req->src);
+    }
     // conn$ client_name
     if (strcmp(cmd, "conn") == 0) {
         if (add_client(req->state, &req->src, args) == 0) {

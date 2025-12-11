@@ -2,8 +2,11 @@
 #define SERVER_H
 
 #include <netinet/in.h>
+#include <stddef.h>
+#include <time.h>
 #include <pthread.h>
 #include "circular_queue.h"
+#include "activity_heap.h"
 #define MAX_NAME_LEN 64
 #define MAX_MUTED 16
 
@@ -12,6 +15,8 @@ struct client_node {
     struct sockaddr_in addr;
     char muted[MAX_MUTED][MAX_NAME_LEN];
     int muted_count;
+    time_t last_active;
+    int heap_index;
     struct client_node *next;
 };
 
@@ -19,6 +24,7 @@ struct server_state {
     struct client_node *head;
     pthread_rwlock_t rwlock;
     message_queue msg_queue;
+    struct activity_heap activity;
 };
 
 void init_server_state(struct server_state *s);

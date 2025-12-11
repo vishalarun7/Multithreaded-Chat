@@ -9,9 +9,9 @@
 #include <gtk/gtk.h>
 #include "udp.h"
 
-#define GLOBAL_LOG_FILE "global.txt"
-#define ROOM_LOG_FILE "room.txt"
-#define PRIV_LOG_FILE "priv.txt"
+#define GLOBAL_LOG_FILE "logs/global.txt"
+#define ROOM_LOG_FILE "logs/room.txt"
+#define PRIV_LOG_FILE "logs/priv.txt"
 
 struct ui_context {
     GtkWidget *window;
