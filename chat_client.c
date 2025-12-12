@@ -12,6 +12,9 @@
 #define GLOBAL_LOG_FILE "logs/global.txt"
 #define ROOM_LOG_FILE "logs/room.txt"
 #define PRIV_LOG_FILE "logs/priv.txt"
+#define MSG_GLOBAL 0x00
+#define MSG_ROOM   0x01
+#define MSG_PRIV   0x02
 
 struct ui_context {
     GtkWidget *window;
@@ -273,24 +276,55 @@ static void *listener_thread(void *arg) {
         if (msg_len == 0)
             continue;
 
-        if(strncmp(buffer, "ping$", strlen("ping$")) != 0){
-            fwrite(buffer, 1, msg_len, ctx->global_log_fd);
-            if (buffer[msg_len - 1] != '\n') {
-                fputc('\n', ctx->global_log_fd);
-            }
-            fflush(ctx->global_log_fd);
+        if (strncmp(buffer, "ping$", strlen("ping$")) != 0) {
 
-            schedule_append(&ctx->ui, ctx->ui.global_view, ctx->ui.global_buffer, buffer);
-        }
-        else{
-            //send re-ping$
+            unsigned char prefix = buffer[0] & 0x03;  
+            const char *payload = buffer + 1;
+
+            FILE *target_log = NULL;
+            GtkWidget *target_view = NULL;
+            GtkTextBuffer *target_buffer = NULL;
+
+            switch (prefix) {
+                case MSG_GLOBAL:  // 00
+                    target_log = ctx->global_log_fd;
+                    target_view = ctx->ui.global_view;
+                    target_buffer = ctx->ui.global_buffer;
+                    break;
+
+                case MSG_ROOM:    // 01
+                    target_log = ctx->room_log_fd;
+                    target_view = ctx->ui.room_view;
+                    target_buffer = ctx->ui.room_buffer;
+                    break;
+
+                case MSG_PRIV:    // 10
+                    target_log = ctx->priv_log_fd;
+                    target_view = ctx->ui.priv_view;
+                    target_buffer = ctx->ui.priv_buffer;
+                    break;
+
+                default:
+                    target_log = ctx->global_log_fd;
+                    target_view = ctx->ui.global_view;
+                    target_buffer = ctx->ui.global_buffer;
+                    break;
+            }
+
+            fprintf(target_log, "%s\n", payload);
+            fflush(target_log);
+
+            schedule_append(&ctx->ui, target_view, target_buffer, payload);
+
+        } else {
             char *msg = g_strdup("re-ping$");
             if (!msg) {
-                fprintf(stderr, "client: failed to allocate disconnect request\n");
+                fprintf(stderr, "client: failed to allocate re-ping\n");
                 break;
             }
             g_async_queue_push(send_queue, msg);
         }
+
     }
 
     return NULL;
