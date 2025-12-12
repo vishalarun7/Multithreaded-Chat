@@ -19,10 +19,6 @@ struct listener_args {
     struct server_state *state;
 };
 
-static void send_with_newline(int sd, const struct sockaddr_in *addr, const char *msg);
-void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name);
-int say_to(struct server_state *s, int sd, const char *msg, const char *recipient_name, const char *sender_name);
-
 static void update_client_activity(struct server_state *state, const struct sockaddr_in *addr) {
     if (!state || !addr) return;
     pthread_rwlock_wrlock(&state->rwlock);
@@ -37,6 +33,49 @@ static void update_client_activity(struct server_state *state, const struct sock
         cur = cur->next;
     }
     pthread_rwlock_unlock(&state->rwlock);
+}
+
+// Adds client to room member list if not already present.
+static int room_add_member(struct chat_room *room, struct client_node *client) {
+    if (!room || !client) return -1;
+    struct room_member *cur = room->members;
+    while (cur) {
+        if (cur->client == client) return 0;
+        cur = cur->next;
+    }
+    struct room_member *node = malloc(sizeof(*node));
+    if (!node) return -1;
+    node->client = client;
+    node->next = room->members;
+    room->members = node;
+    client->room = room;
+    return 0;
+}
+
+// Removes client from current room list.
+static void room_remove_member(struct chat_room *room, struct client_node *client) {
+    if (!room || !client) return;
+    struct room_member **ind = &room->members;
+    while (*ind) {
+        if ((*ind)->client == client) {
+            struct room_member *del = *ind;
+            *ind = del->next;
+            free(del);
+            break;
+        }
+        ind = &(*ind)->next;
+    }
+}
+
+// Detaches client from their room and destroys empty rooms.
+static void detach_client_from_room(struct server_state *state, struct client_node *client) {
+    if (!state || !client || !client->room) return;
+    struct chat_room *room = client->room;
+    room_remove_member(room, client);
+    client->room = NULL;
+    if (!room->members) {
+        room_table_remove(&state->rooms, room->name);
+    }
 }
 
 static void *ping_monitor_thread(void *arg) {
@@ -112,6 +151,7 @@ void init_server_state(struct server_state *s) {
     queue_init(&s->msg_queue);
     pthread_rwlock_init(&s->rwlock, NULL);
     activity_heap_init(&s->activity);
+    room_table_init(&s->rooms);
 }
 
 void destroy_server_state(struct server_state *s) {
@@ -126,6 +166,7 @@ void destroy_server_state(struct server_state *s) {
     pthread_rwlock_unlock(&s->rwlock);
     pthread_rwlock_destroy(&s->rwlock);
     activity_heap_destroy(&s->activity);
+    room_table_destroy(&s->rooms);
 }
 
 struct client_node *find_client_by_name(struct server_state *s, const char *name) {
@@ -184,6 +225,7 @@ int add_client(struct server_state *s, const struct sockaddr_in *addr, const cha
     node->last_ping_sent = 0;
     node->waiting_ping = 0;
     node->heap_index = -1;
+    node->room = NULL;
     node->next = s->head;
     s->head = node;
     if (activity_heap_push(&s->activity, node) != 0) {
@@ -203,6 +245,7 @@ int remove_client_by_name(struct server_state *s, const char *name) {
         if (strncmp((*ind)->name, name, MAX_NAME_LEN) == 0) {
             struct client_node *del = *ind;
             *ind = del->next;
+            detach_client_from_room(s, del);
             activity_heap_remove(&s->activity, del);
             free(del);
             pthread_rwlock_unlock(&s->rwlock);
@@ -224,6 +267,7 @@ int remove_client_by_addr(struct server_state *s, const struct sockaddr_in *addr
         {
             struct client_node *del = *ind;
             *ind = del->next;
+            detach_client_from_room(s, del);
             activity_heap_remove(&s->activity, del);
             free(del);
             pthread_rwlock_unlock(&s->rwlock);
@@ -410,13 +454,140 @@ static void handle_request(struct request *req) {
         return;
     }
 
+    // createroom$ room_name
+    if (strcmp(cmd, "createroom") == 0) {
+        struct client_node *sender = find_client_by_addr(req->state, &req->src);
+        if (!sender) return;
+        if (args[0] == '\0') {
+            send_with_newline(req->sd, &req->src, "[Server] Room name required");
+            return;
+        }
+        pthread_rwlock_wrlock(&req->state->rwlock);
+        if (sender->room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Leave your current room before creating a new one"); // change to be room message
+            return;
+        }
+        struct chat_room *room = room_table_insert(&req->state->rooms, args);
+        if (!room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Unable to create room (maybe name already exists)");
+            return;
+        }
+        if (room_add_member(room, sender) != 0) {
+            room_table_remove(&req->state->rooms, args);
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Failed to join new room");
+            return;
+        }
+        pthread_rwlock_unlock(&req->state->rwlock);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "[Server] Room <%s> created; you joined it", room->name); // change to be room message
+        send_with_newline(req->sd, &req->src, msg);
+        return;
+    }
+
+    // joinroom$ room_name
+    if (strcmp(cmd, "joinroom") == 0) {
+        struct client_node *sender = find_client_by_addr(req->state, &req->src);
+        if (!sender) return;
+        if (args[0] == '\0') {
+            send_with_newline(req->sd, &req->src, "[Server] Room name required");
+            return;
+        }
+        pthread_rwlock_wrlock(&req->state->rwlock);
+        struct chat_room *room = room_table_find(&req->state->rooms, args);
+        if (!room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Room not found");
+            return;
+        }
+        if (sender->room == room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] You are already in that room"); // change to be room message
+            return;
+        }
+        if (sender->room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Leave your current room before joining another"); // change to be room message
+            return;
+        }
+        if (room_add_member(room, sender) != 0) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Failed to join room");
+            return;
+        }
+        pthread_rwlock_unlock(&req->state->rwlock);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "[Server] Joined room <%s>", room->name); // change to be room message
+        send_with_newline(req->sd, &req->src, msg);
+        return;
+    }
+
+    // leaveroom$
+    if (strcmp(cmd, "leaveroom") == 0) {
+        struct client_node *sender = find_client_by_addr(req->state, &req->src);
+        if (!sender) return;
+        pthread_rwlock_wrlock(&req->state->rwlock);
+        if (!sender->room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] You are not in a room");
+            return;
+        }
+        char room_name[MAX_NAME_LEN];
+        strncpy(room_name, sender->room->name, MAX_NAME_LEN - 1);
+        room_name[MAX_NAME_LEN - 1] = '\0';
+        detach_client_from_room(req->state, sender);
+        pthread_rwlock_unlock(&req->state->rwlock);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "[Server] You left room <%s>", room_name);
+        send_with_newline(req->sd, &req->src, msg);
+        return;
+    }
+
+    // kickroom$ client_name
+    if (strcmp(cmd, "kickroom") == 0) {
+        if (ntohs(req->src.sin_port) != 6666) {
+            send_with_newline(req->sd, &req->src, "[Server] You are not an admin"); // change to be room message
+            return;
+        }
+        if (args[0] == '\0') {
+            send_with_newline(req->sd, &req->src, "[Server] Provide a client name to kick"); // change to be room message
+            return;
+        }
+        struct client_node *target = find_client_by_name(req->state, args);
+        if (!target) {
+            send_with_newline(req->sd, &req->src, "[Server] Client not found"); // change to be room message
+            return;
+        }
+        pthread_rwlock_wrlock(&req->state->rwlock);
+        if (!target->room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] Target is not in a room"); // change to be room message
+            return;
+        }
+        char room_name[MAX_NAME_LEN];
+        strncpy(room_name, target->room->name, MAX_NAME_LEN - 1);
+        room_name[MAX_NAME_LEN - 1] = '\0';
+        struct sockaddr_in target_addr = target->addr;
+        detach_client_from_room(req->state, target);
+        pthread_rwlock_unlock(&req->state->rwlock);
+        char notify[256];
+        snprintf(notify, sizeof(notify), "[Server] You have been removed from room <%s>", room_name); 
+        send_with_newline(req->sd, &target_addr, notify);
+        char ack[256];
+        snprintf(ack, sizeof(ack), "[Server] %s removed from room <%s>", args, room_name); // change to be room message
+        send_with_newline(req->sd, &req->src, ack);
+        return;
+    }
+
     // say$ msg
     if (strcmp(cmd, "say") == 0) {
         struct client_node *sender = find_client_by_addr(req->state, &req->src);
         if (!sender) return;
         if (args[0] == '\0') return;
         char msg[BUFFER_SIZE];
-        snprintf(msg, sizeof(msg), "%s: %s", sender->name, args);
+        snprintf(msg, sizeof(msg), "[%s] %s", sender->name, args);
         pthread_rwlock_wrlock(&req->state->rwlock);
         enqueue(&req->state->msg_queue, msg);
         pthread_rwlock_unlock(&req->state->rwlock);
@@ -437,7 +608,7 @@ static void handle_request(struct request *req) {
         char *msg = skip_spaces(space + 1);
         if (msg[0] == '\0') return;
         char formatted[BUFFER_SIZE];
-        snprintf(formatted, sizeof(formatted), "%s: %s", sender->name, msg);
+        snprintf(formatted, sizeof(formatted), "[%s] %s", sender->name, msg);
         say_to(req->state, req->sd, formatted, recipient, sender->name);
         return;
     }
