@@ -6,9 +6,13 @@
 #include <time.h>
 #include <pthread.h>
 #include "circular_queue.h"
-#include "activity_heap.h"
 #define MAX_NAME_LEN 64
 #define MAX_MUTED 16
+#define ROOM_BUCKETS 32
+#include "activity_heap.h"
+#include "room.h"
+
+struct chat_room;
 
 struct client_node {
     char name[MAX_NAME_LEN];
@@ -19,6 +23,7 @@ struct client_node {
     time_t last_ping_sent;
     int waiting_ping;
     int heap_index;
+    struct chat_room *room;
     struct client_node *next;
 };
 
@@ -27,6 +32,7 @@ struct server_state {
     pthread_rwlock_t rwlock;
     message_queue msg_queue;
     struct activity_heap activity;
+    struct room_table rooms;
 };
 
 void init_server_state(struct server_state *s);

@@ -1,7 +1,0 @@
-[Server] sam successfully connected
-ping$
-ping$
-aadi: hey
-aadi: hey
-ping$
-ping$
