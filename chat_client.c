@@ -113,6 +113,36 @@ static gboolean quit_idle(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+// Clears the on-disk room log (logs/room.txt) but keeps the FILE* open so
+// subsequent room messages continue appending in the same session.
+static int truncate_room_log(struct client_context *ctx) {
+    if (!ctx || !ctx->room_log_fd) return -1;
+    fflush(ctx->room_log_fd);
+    int fd = fileno(ctx->room_log_fd);
+    if (fd < 0) return -1;
+    if (ftruncate(fd, 0) < 0) {
+        perror("ftruncate room log");
+        return -1;
+    }
+    lseek(fd, 0, SEEK_SET);
+    return 0;
+}
+
+static gboolean clear_buffer_idle(gpointer data) {
+    GtkTextBuffer *buffer = GTK_TEXT_BUFFER(data);
+    gtk_text_buffer_set_text(buffer, "", -1);
+    g_object_unref(buffer);
+    return G_SOURCE_REMOVE;
+}
+
+// Schedules the GTK room text buffer to be cleared on the UI thread so it
+// matches the truncated log file before joining/leaving a room.
+static void schedule_clear_room_buffer(struct ui_context *ui) {
+    if (!ui || !ui->room_buffer) return;
+    g_object_ref(ui->room_buffer);
+    g_idle_add(clear_buffer_idle, ui->room_buffer);
+}
+
 // Schedules gtk_main_quit to run on the UI thread.
 static void schedule_quit(void) {
     g_idle_add(quit_idle, NULL);
@@ -272,14 +302,12 @@ static void *listener_thread(void *arg) {
 
         buffer[rc] = '\0';
 
-        size_t msg_len = strnlen(buffer, BUFFER_SIZE);
-        if (msg_len == 0)
-            continue;
-
         if (strncmp(buffer, "ping$", strlen("ping$")) != 0) {
 
             unsigned char prefix = buffer[0] & 0x03;  
             const char *payload = buffer + 1;
+            if (*payload == '\0')
+                continue;
 
             FILE *target_log = NULL;
             GtkWidget *target_view = NULL;
@@ -345,6 +373,18 @@ static void *sender_thread(void *arg) {
         if (request[0] == '\0') {
             g_free(request);
             continue;
+        }
+
+        char cmd_buf[64];
+        const char *cmd_start = request;
+        const char *dollar = strchr(request, '$');
+        size_t cmd_len = dollar ? (size_t)(dollar - cmd_start) : strlen(cmd_start);
+        if (cmd_len >= sizeof(cmd_buf)) cmd_len = sizeof(cmd_buf) - 1;
+        memcpy(cmd_buf, cmd_start, cmd_len);
+        cmd_buf[cmd_len] = '\0';
+        if (strcmp(cmd_buf, "joinroom") == 0 || strcmp(cmd_buf, "leaveroom") == 0) {
+            truncate_room_log(ctx);
+            schedule_clear_room_buffer(&ctx->ui);
         }
 
         int rc = udp_socket_write(ctx->sd, &ctx->server_addr, request, (int)strlen(request) + 1);

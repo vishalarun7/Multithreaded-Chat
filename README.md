@@ -174,9 +174,9 @@ We introduced chat rooms with their own message buffers and membership lists. Th
 | Command | Description |
 | ------- | ----------- |
 | `createroom$ <room>` | Create a room (fails if the name already exists) and join it immediately |
-| `joinroom$ <room>` | Join an existing room. Users must leave their current room first |
+| `joinroom$ <room>` | Join an existing room. Users must leave their current room first. Sees recent history |
 | `leaveroom$` | Leave the currently joined room. The room is destroyed when its last member leaves |
-| `say-room$ <msg>` | Send a message only to users in the same room |
+| `sayroom$ <msg>` | Send a message only to users in the same room |
 | `kickroom$ <user>` | **Admin-only (port 6666)** – remove a user from their room (but keep them connected globally) |
 
 Messages carry a 2-bit prefix so the client can route them to the correct pane and log file:

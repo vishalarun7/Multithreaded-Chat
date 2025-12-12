@@ -525,6 +525,13 @@ static void handle_request(struct request *req) {
             send_global(req->sd, &req->src, "[Server] Failed to join room");
             return;
         }
+
+        message_queue *history = &room->history;
+        int idx = history->head;
+        for (int i = 0; i < history->size; ++i) {
+            send_room(req->sd, &req->src, history->messages[idx]);
+            idx = (idx + 1) % max_messages;
+        }
         pthread_rwlock_unlock(&req->state->rwlock);
         char msg[256];
         snprintf(msg, sizeof(msg), "[Server] Joined room <%s>", room->name);
@@ -536,7 +543,7 @@ static void handle_request(struct request *req) {
         struct client_node *sender = find_client_by_addr(req->state, &req->src);
         if (!sender) return;
 
-        pthread_rwlock_rdlock(&req->state->rwlock);
+        pthread_rwlock_wrlock(&req->state->rwlock);
         if (!sender->room) {
             pthread_rwlock_unlock(&req->state->rwlock);
             send_global(req->sd, &req->src, "[Server] You are not in a room");
@@ -550,6 +557,7 @@ static void handle_request(struct request *req) {
         snprintf(formatted, sizeof(formatted), "[%s|%s] %s",
                  sender->room->name, sender->name, args);
 
+        enqueue(&sender->room->history, formatted);
         struct room_member *m = sender->room->members;
         while (m) {
             struct client_node *rc = m->client;

@@ -1,0 +1,8 @@
+[Server] 2 successfully connected
+
+[Server] Joined room <room1>
+
+[Server] You left room <room1>
+
+[Server] Joined room <room1>
+
