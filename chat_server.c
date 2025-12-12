@@ -524,6 +524,37 @@ static void handle_request(struct request *req) {
         return;
     }
 
+    //sayroom$ 
+    if (strcmp(cmd, "sayroom") == 0) {
+        struct client_node *sender = find_client_by_addr(req->state, &req->src);
+        if (!sender) return;
+
+        pthread_rwlock_rdlock(&req->state->rwlock);
+        if (!sender->room) {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            send_with_newline(req->sd, &req->src, "[Server] You are not in a room");
+            return;
+        }
+        if (args[0] == '\0') {
+            pthread_rwlock_unlock(&req->state->rwlock);
+            return;
+        }
+        char formatted[BUFFER_SIZE];
+        snprintf(formatted, sizeof(formatted), "[%s|%s] %s",
+                 sender->room->name, sender->name, args);
+
+        struct room_member *m = sender->room->members;
+        while (m) {
+            struct client_node *rc = m->client;
+            if (rc && !is_muted_for_receiver(rc, sender->name)) {
+                send_with_newline(req->sd, &rc->addr, formatted);
+            }
+            m = m->next;
+        }
+
+        pthread_rwlock_unlock(&req->state->rwlock);
+        return;
+    }
     // leaveroom$
     if (strcmp(cmd, "leaveroom") == 0) {
         struct client_node *sender = find_client_by_addr(req->state, &req->src);
