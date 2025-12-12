@@ -32,6 +32,10 @@ struct server_state {
 void init_server_state(struct server_state *s);
 void destroy_server_state(struct server_state *s);
 
+static void send_with_newline(int sd, const struct sockaddr_in *addr, const char *msg);
+void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name);
+int say_to(struct server_state *s, int sd, const char *msg, const char *recipient_name, const char *sender_name);
+
 
 struct client_node *find_client_by_name(struct server_state *s, const char *name);
 struct client_node *find_client_by_addr(struct server_state *s, const struct sockaddr_in *addr);

@@ -20,10 +20,6 @@ struct listener_args {
     struct server_state *state;
 };
 
-static void send_with_newline(int sd, const struct sockaddr_in *addr, const char *msg);
-void say_message(struct server_state *s, int sd, const char *msg, const char *sender_name);
-int say_to(struct server_state *s, int sd, const char *msg, const char *recipient_name, const char *sender_name);
-
 static void update_client_activity(struct server_state *state, const struct sockaddr_in *addr) {
     if (!state || !addr) return;
     pthread_rwlock_wrlock(&state->rwlock);
