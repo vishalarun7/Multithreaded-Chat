@@ -27,6 +27,7 @@ A multithreaded client–server chat system written in **C**, featuring:
 5. [Command Reference](#command-reference)  
 6. [Visualisations](#visualisations)  
 7. [Proposed Extensions](#proposed-extensions)
+8. [Further Enhancements](#further-enhancements)
 
 ---
 
@@ -36,6 +37,7 @@ A multithreaded client–server chat system written in **C**, featuring:
 - GTK client with separate panes for global, room, and private logs  
 - Circular queue (PE1) to replay recent history on connect  
 - Min-heap monitor (PE2) to ping and remove inactive clients
+- Chat rooms (FE1) to send messages to a group of clints
 
 ---
 
@@ -47,9 +49,10 @@ Multithreaded-Chat/
 ├── chat_client.c         # GTK client implementation
 ├── chat_server.c/.h      # Server logic + state
 ├── circular_queue.c/.h   # Message history buffer (PE1)
+├── room.c/.h             # Chat rooms (FE1)
 ├── udp.h                 # UDP socket helpers
 ├── logs/                 # Client log outputs
-├── client / server       # Convenience launchers (optional)
+├── client / server       # Convenience launchers
 └── Preview.png           # GUI screenshot
 ```
 
@@ -82,7 +85,7 @@ On macOS, install via Homebrew: `brew install gtk+3`.
 
 **Server**
 ```bash
-gcc chat_server.c circular_queue.c activity_heap.c -lpthread -o server
+gcc chat_server.c circular_queue.c activity_heap.c room.c -lpthread -o server
 ```
 
 **Client (GTK UI)**
@@ -133,6 +136,9 @@ Multiple clients may run simultaneously; logs land in `logs/`.
 | `kick$ <name>` | **Admin-only (port 6666)** – eject a user |
 | `ping$` / `ret-ping$` | Keepalive pair used by PE2 (responses handled automatically by the client) |
 
+> **Design Choice**  
+> All commands are parsed inside a single `handle_request()` function (despite brief) that runs in a dedicated worker thread per incoming packet. Because each packet already spawns its own thread, dispatching again per command would only multiply thread overhead without reducing lock contention. Keeping the logic centralized makes it easy to add new commands while still processing requests concurrently.
+
 ---
 
 ## Visualisations
@@ -158,3 +164,25 @@ A thread-safe min-heap (`activity_heap.c`) stores `(last_active, client)` pairs 
 All heap updates occur while holding the existing `pthread_rwlock_t`, so this extension remains thread safe—request handlers, client removal, and the monitor never manipulate the heap concurrently without the lock.
 
 ---
+
+## Further Enhancements
+
+### Chat Rooms & Message Tags
+
+We introduced chat rooms with their own message buffers and membership lists. The server exposes new room-specific commands that reuse the same text-based protocol:
+
+| Command | Description |
+| ------- | ----------- |
+| `createroom$ <room>` | Create a room (fails if the name already exists) and join it immediately |
+| `joinroom$ <room>` | Join an existing room. Users must leave their current room first |
+| `leaveroom$` | Leave the currently joined room. The room is destroyed when its last member leaves |
+| `say-room$ <msg>` | Send a message only to users in the same room |
+| `kickroom$ <user>` | **Admin-only (port 6666)** – remove a user from their room (but keep them connected globally) |
+
+Messages carry a 2-bit prefix so the client can route them to the correct pane and log file:
+
+- `00` – global traffic  (`logs/global.txt`)
+- `01` – room traffic    (`logs/room.txt`)
+- `10` – private traffic (`logs/priv.txt`)
+
+This approach lets the GTK client style output differently for each channel and keep the disk logs separated without extra parsing.
