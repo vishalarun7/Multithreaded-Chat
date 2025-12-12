@@ -483,7 +483,7 @@ static void handle_request(struct request *req) {
         }
         pthread_rwlock_unlock(&req->state->rwlock);
         char msg[256];
-        snprintf(msg, sizeof(msg), "[Server] Room %s created; you joined it", room->name); // change to be room message
+        snprintf(msg, sizeof(msg), "[Server] Room <%s> created; you joined it", room->name); // change to be room message
         send_with_newline(req->sd, &req->src, msg);
         return;
     }
@@ -520,7 +520,7 @@ static void handle_request(struct request *req) {
         }
         pthread_rwlock_unlock(&req->state->rwlock);
         char msg[256];
-        snprintf(msg, sizeof(msg), "[Server] Joined room %s", room->name); // change to be room message
+        snprintf(msg, sizeof(msg), "[Server] Joined room <%s>", room->name); // change to be room message
         send_with_newline(req->sd, &req->src, msg);
         return;
     }
@@ -541,7 +541,7 @@ static void handle_request(struct request *req) {
         detach_client_from_room(req->state, sender);
         pthread_rwlock_unlock(&req->state->rwlock);
         char msg[256];
-        snprintf(msg, sizeof(msg), "[Server] You left room %s", room_name);
+        snprintf(msg, sizeof(msg), "[Server] You left room <%s>", room_name);
         send_with_newline(req->sd, &req->src, msg);
         return;
     }
@@ -574,10 +574,10 @@ static void handle_request(struct request *req) {
         detach_client_from_room(req->state, target);
         pthread_rwlock_unlock(&req->state->rwlock);
         char notify[256];
-        snprintf(notify, sizeof(notify), "[Server] You have been removed from room %s", room_name); 
+        snprintf(notify, sizeof(notify), "[Server] You have been removed from room <%s>", room_name); 
         send_with_newline(req->sd, &target_addr, notify);
         char ack[256];
-        snprintf(ack, sizeof(ack), "[Server] %s removed from room %s", args, room_name); // change to be room message
+        snprintf(ack, sizeof(ack), "[Server] %s removed from room <%s>", args, room_name); // change to be room message
         send_with_newline(req->sd, &req->src, ack);
         return;
     }
@@ -588,7 +588,7 @@ static void handle_request(struct request *req) {
         if (!sender) return;
         if (args[0] == '\0') return;
         char msg[BUFFER_SIZE];
-        snprintf(msg, sizeof(msg), "%s: %s", sender->name, args);
+        snprintf(msg, sizeof(msg), "[%s] %s", sender->name, args);
         pthread_rwlock_wrlock(&req->state->rwlock);
         enqueue(&req->state->msg_queue, msg);
         pthread_rwlock_unlock(&req->state->rwlock);
@@ -609,7 +609,7 @@ static void handle_request(struct request *req) {
         char *msg = skip_spaces(space + 1);
         if (msg[0] == '\0') return;
         char formatted[BUFFER_SIZE];
-        snprintf(formatted, sizeof(formatted), "%s: %s", sender->name, msg);
+        snprintf(formatted, sizeof(formatted), "[%s] %s", sender->name, msg);
         say_to(req->state, req->sd, formatted, recipient, sender->name);
         return;
     }
