@@ -1,0 +1,18 @@
+[Server] admin successfully connected
+[Server] Room not found
+[Server] Joined room room1
+[Server] You are not an admin
+[Server] You are not an admin
+[Server] Provide a client name to kick
+[Server] Client not found
+[Server] sam removed from room room1
+[Server] You have been removed from room room1
+[Server] You are not in a room
+[Server] Joined room room1
+[Server] You left room room1
+[Server] You left room room1
+[Server] Room not found
+[Server] Room not found
+[Server] You are not in a room
+[Server] Target is not in a room
+[Server] Client not found
